@@ -1,12 +1,14 @@
 /* Poker Math Lab — Service Worker（离线缓存） */
-const CACHE = 'pml-v1';
+const CACHE = 'pml-v2';
 const ASSETS = [
   './',
   './index.html',
   './app.js',
   './engine.js',
   './manifest.json',
-  './icons/icon.svg',
+  './icons/icon-180.png',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
 ];
 
 self.addEventListener('install', e => {
