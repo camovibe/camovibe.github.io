@@ -9,6 +9,7 @@
 <meta name="apple-mobile-web-app-title" content="PokerMath">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icons/01a208e0-8e1f-7ea0-91c0-0db5c496a136-icon-180.png">
+<link rel="icon" type="image/svg+xml" href="icons/icon.svg">
 <title>Poker Math Lab · 扑克心算实验室</title>
 <style>
 :root{
@@ -72,10 +73,11 @@ nav#modules{
 }
 .mod-btn .num{font-family:var(--mono);font-size:11px;letter-spacing:.1em;display:block;margin-bottom:2px}
 .mod-btn .nm{font-size:14px;color:var(--muted)}
-.mod-btn:hover .nm{color:var(--text)}
+.mod-btn:hover:not(.locked) .nm{color:var(--text)}
 .mod-btn.active{border-bottom-color:var(--signal)}
 .mod-btn.active .num{color:var(--signal)}
 .mod-btn.active .nm{color:var(--text);text-shadow:0 0 18px rgba(255,158,64,.35)}
+.mod-btn.locked{opacity:.32;cursor:not-allowed}
 /* 分层标记：基础=灰，进阶=信号橙，高阶=琥珀 */
 .mod-btn.t1 .num{color:var(--signal)}
 .mod-btn.t2 .num{color:var(--warn)}
@@ -93,6 +95,43 @@ nav#modules{
 /* ---- 主舞台 ---- */
 main{display:flex;justify-content:center;padding:26px 20px 40px}
 #stage{width:100%;max-width:860px;display:flex;flex-direction:column;gap:18px}
+
+/* ---- 关卡大厅 ---- */
+#lobby{width:100%;max-width:860px;display:flex;flex-direction:column;gap:20px}
+.lobby-head{text-align:center;padding:6px 0 2px}
+.lobby-title{font-size:23px;font-weight:700;letter-spacing:.06em}
+.lobby-sub{font-size:12px;color:var(--faint);font-family:var(--mono);margin-top:8px;letter-spacing:.05em}
+.lobby-lv{
+  font-family:var(--mono);font-size:12px;color:var(--signal);margin-top:12px;letter-spacing:.1em;
+  display:inline-block;border:1px solid rgba(255,158,64,.35);border-radius:999px;padding:3px 14px;
+}
+.tier-label{
+  font-family:var(--mono);font-size:11px;letter-spacing:.24em;color:var(--faint);
+  display:flex;align-items:center;gap:10px;margin-top:4px;
+}
+.tier-label::after{content:"";flex:1;height:1px;background:var(--border)}
+.lv-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.lv-card{
+  appearance:none;text-align:left;cursor:pointer;
+  background:var(--panel);border:1px solid var(--border);border-radius:var(--r-md);
+  padding:16px 18px 14px;color:var(--text);
+  display:flex;flex-direction:column;gap:8px;
+  transition:border-color .25s,box-shadow .25s,transform .1s;
+  animation:deal .5s var(--ease-reveal) both;
+}
+.lv-card:hover:not(.locked){border-color:rgba(255,158,64,.5);box-shadow:0 0 18px rgba(255,158,64,.1)}
+.lv-card:active:not(.locked){transform:translateY(1px)}
+.lv-card.locked{opacity:.42;cursor:not-allowed}
+.lv-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.lv-num{font-family:var(--mono);font-size:11px;letter-spacing:.12em;color:var(--signal)}
+.lv-card.t2 .lv-num{color:var(--warn)}
+.lv-status{font-family:var(--mono);font-size:11px;letter-spacing:.08em;white-space:nowrap}
+.lv-status.pass{color:var(--pass)}
+.lv-status.open{color:var(--signal)}
+.lv-status.lock{color:var(--faint)}
+.lv-name{font-size:15px;font-weight:600;letter-spacing:.02em}
+.lv-meta{font-family:var(--mono);font-size:11px;color:var(--faint);display:flex;gap:12px;flex-wrap:wrap}
+.lv-req{font-size:11px;color:var(--faint);line-height:1.5;border-top:1px solid var(--border);padding-top:8px}
 
 .table{
   background:var(--panel);border:1px solid var(--border);border-radius:var(--r-md);
@@ -200,6 +239,8 @@ footer .spacer{flex:1}
 .link-btn:hover{color:var(--muted)}
 #replay-btn{color:var(--warn)}
 #replay-btn:hover{color:var(--signal)}
+#home-btn{color:var(--pass)}
+#home-btn:hover{color:var(--signal)}
 
 /* ---- 组小结弹层 ---- */
 #round-overlay,
@@ -290,11 +331,14 @@ footer .spacer{flex:1}
   header{padding:14px 16px 10px}
   nav#modules{padding:0 16px}
   #subnav{padding:12px 16px 0}
+  .lv-grid{grid-template-columns:1fr}
   .card{width:52px;height:72px}
   .card .r{font-size:20px}.card .s{font-size:16px}
   .answer-display{font-size:36px}
   .decide-btn{padding:14px 36px;font-size:18px}
   footer{padding:10px 16px;gap:16px}
+  .round-grid{grid-template-columns:1fr}
+  .round-panel{min-width:0;width:92vw}
 }
 @media (prefers-reduced-motion:reduce){
   *{animation:none!important;transition:none!important}
@@ -316,11 +360,20 @@ footer .spacer{flex:1}
   </div>
 </header>
 
-<nav id="modules"></nav>
-<div id="subnav"></div>
+<nav id="modules" style="display:none"></nav>
+<div id="subnav" style="display:none"></div>
 
 <main>
-  <section id="stage">
+  <section id="lobby">
+    <div class="lobby-head">
+      <div class="lobby-title">选择关卡</div>
+      <div class="lobby-sub">每组 20 题 · 合格线：正确率 ≥ 90% 且均时 ≤ 目标 · 合格即解锁下一关</div>
+      <div><span class="lobby-lv" id="lobby-lv"></span></div>
+    </div>
+    <div id="lobby-tiers"></div>
+  </section>
+
+  <section id="stage" style="display:none">
     <div class="table" id="table">
       <div id="board-zone" style="display:none">
         <div class="zone-label" id="board-label">牌面</div>
@@ -345,6 +398,7 @@ footer .spacer{flex:1}
   <span class="fstat">本模块正确率<b id="f-acc">—</b></span>
   <span class="fstat">平均用时<b id="f-avg">—</b></span>
   <span class="spacer"></span>
+  <button class="link-btn" id="home-btn" style="display:none">关卡地图</button>
   <button class="link-btn" id="replay-btn" style="display:none">错题回放</button>
   <button class="link-btn" id="reset-stats">清空统计</button>
 </footer>
@@ -355,6 +409,7 @@ footer .spacer{flex:1}
     <div class="round-title" id="round-title"></div>
     <div class="round-grid" id="round-grid"></div>
     <button class="key go" id="round-continue">继续 · Enter</button>
+    <div style="margin-top:14px"><button class="link-btn" id="round-home">返回关卡地图</button></div>
   </div>
 </div>
 
@@ -368,7 +423,7 @@ footer .spacer{flex:1}
       <div id="mod-progress"></div>
     </div>
     <div class="progress-note">
-      达标线：题数 ≥ 40 · 正确率 ≥ 90% · 均时 ≤ 目标用时。段位按层递进：基础层 01-04 → 决策 05 → 修正层 06-09 → 博弈层 10-13。<br>
+      解锁规则：每关练满一组 20 题，正确率 ≥ 90% 且均时 ≤ 目标即合格，自动解锁下一关。段位达标线：累计题数 ≥ 40 · 正确率 ≥ 90% · 均时 ≤ 目标。段位按层递进：基础层 01-04 → 决策 05 → 修正层 06-09 → 博弈层 10-13。<br>
       百分比为对<b>现场低中级别现金桌/朋友局玩家池</b>的推算估算（依据：绝大多数娱乐玩家不计算赔率，常客中系统做范围与 EV 修正的是少数）——数学是地板不是天花板：读人、情绪控制、资金管理不在此尺上。对职业桌，Lv5 只是入场券。
     </div>
     <div style="text-align:center;margin-top:20px">
