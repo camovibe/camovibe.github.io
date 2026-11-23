@@ -184,10 +184,68 @@
     return maybeTurn(ctx, street, new Set([x - 1, x, x + 1, x + 2, x + 3, x + 4]), new Set([s]), scen);
   }
 
-  const SCENARIO_GENS = {
+  const RAW_GENS = {
     flush: genFlush, oesd: genOesd, gut: genGut, over: genOver, set: genSet,
     flushgut: genFlushGut, flushoesd: genFlushOesd,
   };
+
+  /* =============== 场景纯洁性校验（反向穷举） ===============
+     问题背景：生成器只控制目标牌型的构造参数，随机点数/花色可能
+     "顺带"形成另一种听牌（例：同花听牌面 9♠A♠Q♦ + 转牌 8♣，
+     手持 J♠3♠ 时 8-9-J-Q 缺 T 又成卡顺，真实 outs = 9+3 = 12）。
+     校验器把剩余每张牌逐一代入，检查是否成同花/成顺，数出真实
+     听牌 outs；与声明值不符的场景一律重掷。 */
+
+  function makesFlush(cards) {
+    const cnt = [0, 0, 0, 0];
+    for (const c of cards) cnt[c.s]++;
+    return cnt.some(n => n >= 5);
+  }
+  function makesStraight(cards) {
+    const set = new Set(cards.map(c => c.r));
+    if (set.has(14)) set.add(1); /* A 可作 1（A-2-3-4-5 轮顺） */
+    for (let lo = 1; lo <= 10; lo++) {
+      let ok = true;
+      for (let k = 0; k < 5; k++) if (!set.has(lo + k)) { ok = false; break; }
+      if (ok) return true;
+    }
+    return false;
+  }
+  /* 返回 -1 表示 hero+board 已成牌（场景无效），否则为真实听牌 outs */
+  function enumerateDrawOuts(hero, board) {
+    const seen = hero.concat(board);
+    if (makesFlush(seen) || makesStraight(seen)) return -1;
+    const used = new Set(seen.map(c => c.r * 4 + c.s));
+    let n = 0;
+    for (let r = 2; r <= 14; r++) {
+      for (let s = 0; s < 4; s++) {
+        if (used.has(r * 4 + s)) continue;
+        const cards = seen.concat([{ r, s }]);
+        if (makesFlush(cards) || makesStraight(cards)) n++;
+      }
+    }
+    return n;
+  }
+  /* over / set 的 outs 来自击中点数而非成牌听型，要求听型 outs 为 0 */
+  function scenarioClean(scen) {
+    const d = enumerateDrawOuts(scen.hero, scen.board);
+    if (d < 0) return false;
+    if (scen.kind === 'over' || scen.kind === 'set') return d === 0;
+    return d === scen.outs;
+  }
+  /* 包装：生成 → 反向校验 → 不纯重掷 */
+  function wrapClean(gen, kind) {
+    return function (_ctx, street) {
+      for (let i = 0; i < 300; i++) {
+        let scen;
+        try { scen = gen(makeCtx(), street); } catch (e) { continue; }
+        if (scenarioClean(scen)) return scen;
+      }
+      throw new Error('clean scenario exhausted: ' + kind);
+    };
+  }
+  const SCENARIO_GENS = {};
+  for (const k of Object.keys(RAW_GENS)) SCENARIO_GENS[k] = wrapClean(RAW_GENS[k], k);
 
   /* =============== 独立重算 outs（验证用） =============== */
   function recount(scen) {
@@ -340,6 +398,14 @@
 
   /* =============== 模块 6：有效 Outs（脏牌修正） =============== */
   function genDirtyOutsQuestion() {
+    /* 同样过反向校验：生成的底场景必须纯洁（outs 与穷举一致） */
+    for (let attempt = 0; attempt < 300; attempt++) {
+      const q = genDirtyOutsRaw();
+      if (scenarioClean(q.scen)) return q;
+    }
+    throw new Error('dirty scenario exhausted');
+  }
+  function genDirtyOutsRaw() {
     const t = pick(['oesdFlush', 'gutFlush', 'overHold', 'setHold']);
     const ctx = makeCtx();
     if (t === 'oesdFlush' || t === 'gutFlush') {
@@ -666,6 +732,7 @@
     rankLabel, cardLabel, isRedSuit,
     makeCtx, setRng,
     SCENARIO_GENS, recount,
+    enumerateDrawOuts, scenarioClean,
     genOutsQuestion, genEquityQuestion, genPotOddsQuestion,
     genDecisionQuestion, genNumberSenseQuestion,
     genDirtyOutsQuestion, genMatchupQuestion, genCombosQuestion,
