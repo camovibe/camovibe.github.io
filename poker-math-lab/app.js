@@ -1,4 +1,4 @@
-/* Poker Math Lab — UI 逻辑 */
+/* Poker Math Lab — UI 逻辑（关卡制：大厅选关 · 合格解锁下一关） */
 (function () {
   'use strict';
   const E = window.PokerEngine;
@@ -23,8 +23,10 @@
     { id: 'basic', label: '基础听牌' },
     { id: 'combo', label: '组合听牌' },
   ];
+  const TIER_LABELS = ['基础层 · BASIC', '修正层 · CORRECTION', '博弈层 · GAME THEORY'];
   const ROUND_SIZE = 20;
   const WRONGS_CAP = 50;
+  const PASS_ACC = 90; /* 解锁合格线：单组正确率 ≥ 90% 且均时 ≤ 目标 */
 
   /* ---------- 段位体系 ----------
      达标线：题数 ≥ 40 · 正确率 ≥ 90% · 均时 ≤ 目标用时；段位按层递进 */
@@ -61,6 +63,11 @@
     }
     return lv;
   }
+
+  /* ---------- 关卡解锁 ---------- */
+  const isPassed = id => !!state.stats.passed[id] || modQualified(id);
+  const isUnlocked = i => i === 0 || isPassed(MODULES[i - 1].id);
+
   function renderProgress() {
     const lv = computeLevel();
     $('lvl-badge').textContent = LEVELS[lv].name.split(' · ')[0];
@@ -73,12 +80,14 @@
       const mark = i < lv ? '✓ ' : (i === lv ? '▸ ' : '');
       return `<div class="lvl-row ${cls}"><span class="lvn">${mark}${L.name}</span><span class="lvp">${L.pct}</span></div>`;
     }).join('');
-    $('mod-progress').innerHTML = MODULES.map(m => {
+    $('mod-progress').innerHTML = MODULES.map((m, i) => {
       const st = state.stats.modules[m.id];
       const acc = st.n ? Math.round((st.ok / st.n) * 100) + '%' : '—';
       const avg = st.n ? (st.ms / st.n / 1000).toFixed(1) + 's' : '—';
-      const ok = modQualified(m.id);
-      const status = ok ? '<span class="st-ok">达标</span>' : (st.n ? '<span class="st-ing">训练中</span>' : '<span class="st-no">未开始</span>');
+      const ok = isPassed(m.id);
+      const status = ok ? '<span class="st-ok">已合格</span>'
+        : (!isUnlocked(i) ? '<span class="st-no">🔒 锁定</span>'
+        : (st.n ? '<span class="st-ing">训练中</span>' : '<span class="st-no">未开始</span>'));
       return `<div class="mod-row">` +
         `<span class="dim">${m.num}</span><span class="nm">${m.name}</span>` +
         `<span>${st.n}</span><span>${acc}</span><span>${avg}</span>` +
@@ -98,15 +107,17 @@
       const s = JSON.parse(localStorage.getItem(LS_KEY));
       if (s && s.modules) {
         if (!Array.isArray(s.wrongs)) s.wrongs = [];
+        if (!s.passed || typeof s.passed !== 'object') s.passed = {};
         for (const m of MODULES) if (!s.modules[m.id]) s.modules[m.id] = { n: 0, ok: 0, ms: 0, streak: 0, best: 0 };
         return s;
       }
     } catch (e) { /* ignore */ }
-    return { modules: blankStats(), wrongs: [] };
+    return { modules: blankStats(), wrongs: [], passed: {} };
   }
   function saveStats() { localStorage.setItem(LS_KEY, JSON.stringify(state.stats)); }
 
   const state = {
+    screen: 'lobby', /* lobby | quiz */
     module: 'outs',
     outsTier: 'all',
     q: null,
@@ -116,9 +127,18 @@
     timerId: null,
     stats: loadStats(),
     session: {},   /* 本次打开以来的练习（不持久化），按模块计 */
+    round: { n: 0, ok: 0, ms: 0 }, /* 当前这一组 20 题 */
     replay: null,  /* { queue:[entry], idx } */
   };
   for (const m of MODULES) state.session[m.id] = { n: 0, ok: 0, ms: 0 };
+  /* 迁移：历史数据已达段位标准的模块，直接视为已合格（解锁用） */
+  (function migrate() {
+    let changed = false;
+    for (const m of MODULES) {
+      if (modQualified(m.id) && !state.stats.passed[m.id]) { state.stats.passed[m.id] = true; changed = true; }
+    }
+    if (changed) saveStats();
+  })();
 
   /* ---------- DOM ---------- */
   const $ = id => document.getElementById(id);
@@ -129,7 +149,7 @@
     potLine: $('pot-line'),
     question: $('question'), inputArea: $('input-area'), feedback: $('feedback'),
     fTime: $('f-time'), fStreak: $('f-streak'), fAcc: $('f-acc'), fAvg: $('f-avg'), fRound: $('f-round'),
-    headStats: $('head-stats'), replayBtn: $('replay-btn'),
+    headStats: $('head-stats'), replayBtn: $('replay-btn'), homeBtn: $('home-btn'),
     overlay: $('round-overlay'), roundTitle: $('round-title'), roundGrid: $('round-grid'),
   };
 
@@ -184,12 +204,79 @@
   function startReplay() {
     if (!state.stats.wrongs.length) return;
     state.replay = { queue: state.stats.wrongs.slice(), idx: 0 };
+    setScreen('quiz');
+    renderNav(); renderSubnav();
     nextQuestion();
   }
   function renderReplayBtn() {
     const n = state.stats.wrongs.length;
     els.replayBtn.style.display = n ? '' : 'none';
     els.replayBtn.textContent = `错题回放 · ${n}`;
+  }
+
+  /* ---------- 大厅 / 关卡 ---------- */
+  function setScreen(s) {
+    state.screen = s;
+    const lobby = s === 'lobby';
+    if (lobby) stopTimer();
+    $('lobby').style.display = lobby ? '' : 'none';
+    $('stage').style.display = lobby ? 'none' : '';
+    els.modules.style.display = lobby ? 'none' : '';
+    els.subnav.style.display = lobby ? 'none' : '';
+    els.homeBtn.style.display = lobby ? 'none' : '';
+    if (lobby) renderLobby();
+  }
+  function startModule(id) {
+    state.module = id;
+    state.replay = null;
+    state.round = { n: 0, ok: 0, ms: 0 };
+    setScreen('quiz');
+    renderNav(); renderSubnav();
+    nextQuestion();
+  }
+  function backToLobby() {
+    state.replay = null;
+    hideRoundSummary();
+    setScreen('lobby');
+    updateStatsBar();
+  }
+
+  function renderLobby() {
+    const lv = computeLevel();
+    $('lobby-lv').textContent = `${LEVELS[lv].name} · ${LEVELS[lv].pct}`;
+    const host = $('lobby-tiers');
+    host.innerHTML = '';
+    for (let t = 0; t < TIER_LABELS.length; t++) {
+      const label = document.createElement('div');
+      label.className = 'tier-label';
+      label.textContent = TIER_LABELS[t];
+      host.appendChild(label);
+      const grid = document.createElement('div');
+      grid.className = 'lv-grid';
+      MODULES.forEach((m, i) => {
+        if (m.tier !== t) return;
+        const unlocked = isUnlocked(i);
+        const passed = isPassed(m.id);
+        const st = state.stats.modules[m.id];
+        const status = passed
+          ? '<span class="lv-status pass">✓ 已合格</span>'
+          : (unlocked ? '<span class="lv-status open">▸ 可挑战</span>' : '<span class="lv-status lock">🔒 未解锁</span>');
+        const b = document.createElement('button');
+        b.className = 'lv-card t' + m.tier + (unlocked ? '' : ' locked');
+        b.innerHTML =
+          `<div class="lv-top"><span class="lv-num">${m.num} /</span>${status}</div>` +
+          `<div class="lv-name">${m.name}</div>` +
+          `<div class="lv-meta">` +
+            `<span>目标 ≤${m.par}s</span><span>已练 ${st.n}</span>` +
+            `<span>正确率 ${st.n ? Math.round((st.ok / st.n) * 100) + '%' : '—'}</span>` +
+            `<span>均时 ${st.n ? (st.ms / st.n / 1000).toFixed(1) + 's' : '—'}</span>` +
+          `</div>` +
+          (unlocked ? '' : `<div class="lv-req">先合格上一关：${MODULES[i - 1].num} ${MODULES[i - 1].name}（20 题 · ≥${PASS_ACC}% · ≤${MODULES[i - 1].par}s）</div>`);
+        if (unlocked) b.addEventListener('click', () => startModule(m.id));
+        grid.appendChild(b);
+      });
+      host.appendChild(grid);
+    }
   }
 
   /* ---------- 渲染 ---------- */
@@ -238,8 +325,8 @@
     const sub = document.createElement('span');
     sub.className = 'qsub';
     sub.textContent = state.replay
-      ? `错题回放 ${state.replay.idx + 1}/${state.replay.queue.length} · ${mod.num} ${mod.name} · 目标 ≤ ${mod.par}s（点上方模块可退出回放）`
-      : `${mod.num} ${mod.name} · 目标用时 ≤ ${mod.par}s`;
+      ? `错题回放 ${state.replay.idx + 1}/${state.replay.queue.length} · ${mod.num} ${mod.name} · 目标 ≤ ${mod.par}s（点关卡地图可退出回放）`
+      : `${mod.num} ${mod.name} · 目标用时 ≤ ${mod.par}s · 本组 ${state.round.n}/${ROUND_SIZE}`;
     els.question.appendChild(sub);
 
     els.feedback.className = '';
@@ -332,6 +419,9 @@
 
     const se = state.session[mod];
     se.n++; se.ms += ms; if (ok) se.ok++;
+    if (!state.replay) {
+      state.round.n++; state.round.ms += ms; if (ok) state.round.ok++;
+    }
 
     /* 错题本：普通模式答错入库；回放模式答对销账、再错排到队尾 */
     const replayEntry = state.replay ? state.replay.queue[state.replay.idx] : null;
@@ -354,7 +444,7 @@
     updateStatsBar();
     renderReplayBtn();
 
-    const roundHit = !state.replay && se.n % ROUND_SIZE === 0;
+    const roundHit = !state.replay && state.round.n === ROUND_SIZE;
     if (roundHit) {
       showRoundSummary(mod);
     } else if (ok) {
@@ -365,22 +455,50 @@
   /* 统一的前进入口：回放队首 / 普通下一题 */
   function advance() { nextQuestion(); }
 
-  /* ---------- 组小结 ---------- */
+  /* ---------- 组小结（含合格判定与解锁） ---------- */
   function showRoundSummary(mod) {
     const m = MODULES.find(x => x.id === mod);
-    const se = state.session[mod];
+    const idx = MODULES.findIndex(x => x.id === mod);
+    const next = MODULES[idx + 1] || null;
     const all = state.stats.modules[mod];
+    const r = state.round;
     const acc = x => (x.n ? Math.round((x.ok / x.n) * 100) + '%' : '—');
     const avg = x => (x.n ? (x.ms / x.n / 1000).toFixed(1) + 's' : '—');
-    els.roundTitle.textContent = `${m.num} ${m.name} · 第 ${se.n / ROUND_SIZE} 组完成`;
+
+    const rAcc = r.n ? (r.ok / r.n) * 100 : 0;
+    const rAvg = r.n ? r.ms / r.n / 1000 : Infinity;
+    const roundPassed = r.n >= ROUND_SIZE && rAcc >= PASS_ACC && rAvg <= m.par;
+
+    let verdict, unlock;
+    if (roundPassed) {
+      state.stats.passed[mod] = true;
+      saveStats();
+      verdict = `<b style="color:var(--pass)">✓ 合格</b>`;
+      unlock = next
+        ? `<b style="color:var(--pass)">已解锁 ${next.num} ${next.name}</b>`
+        : `<b style="color:var(--pass)">全部关卡已通关</b>`;
+    } else {
+      const reasons = [];
+      if (rAcc < PASS_ACC) reasons.push(`正确率 ${Math.round(rAcc)}% < ${PASS_ACC}%`);
+      if (rAvg > m.par) reasons.push(`均时 ${rAvg.toFixed(1)}s > ${m.par}s`);
+      verdict = `<b style="color:var(--fail)">✗ 未合格</b>`;
+      unlock = `<b style="color:var(--warn)">${reasons.join(' · ')}</b>`;
+    }
+
+    const seRound = Math.ceil(state.session[mod].n / ROUND_SIZE);
+    els.roundTitle.textContent = `${m.num} ${m.name} · 第 ${seRound} 组完成`;
     els.roundGrid.innerHTML =
-      `<div><span>本组正确率</span><b>${acc(se)}</b></div>` +
-      `<div><span>本组均时</span><b>${avg(se)}</b></div>` +
+      `<div><span>本组正确率</span><b>${r.n ? Math.round(rAcc) + '%' : '—'}（需 ≥${PASS_ACC}%）</b></div>` +
+      `<div><span>本组均时</span><b>${r.n ? rAvg.toFixed(1) + 's' : '—'}（需 ≤${m.par}s）</b></div>` +
       `<div><span>历史正确率</span><b>${acc(all)}</b></div>` +
       `<div><span>历史均时</span><b>${avg(all)}</b></div>` +
-      `<div><span>目标用时</span><b>≤ ${m.par}s</b></div>` +
-      `<div><span>错题待回</span><b>${state.stats.wrongs.length}</b></div>`;
+      `<div><span>本组判定</span>${verdict}</div>` +
+      `<div><span>关卡进度</span>${unlock}</div>`;
     els.overlay.classList.add('open');
+
+    /* 进入下一组 */
+    state.round = { n: 0, ok: 0, ms: 0 };
+    renderNav(); /* 解锁状态可能变化 */
   }
   function hideRoundSummary() { els.overlay.classList.remove('open'); }
 
@@ -401,11 +519,10 @@
   function fmtAvg(st) { return st.n ? (st.ms / st.n / 1000).toFixed(1) + 's' : '—'; }
   function updateStatsBar() {
     const st = state.stats.modules[state.module];
-    const se = state.session[state.module];
     els.fStreak.textContent = st.streak;
     els.fAcc.textContent = fmtAcc(st);
     els.fAvg.textContent = fmtAvg(st);
-    els.fRound.textContent = (se.n % ROUND_SIZE) + '/' + ROUND_SIZE;
+    els.fRound.textContent = state.round.n + '/' + ROUND_SIZE;
     let tn = 0, tok = 0, tms = 0, best = 0;
     for (const m of MODULES) {
       const s = state.stats.modules[m.id];
@@ -423,17 +540,21 @@
   /* ---------- 导航 ---------- */
   function renderNav() {
     els.modules.innerHTML = '';
-    for (const m of MODULES) {
+    MODULES.forEach((m, i) => {
+      const unlocked = isUnlocked(i);
       const b = document.createElement('button');
-      b.className = 'mod-btn t' + m.tier + (m.id === state.module ? ' active' : '');
-      b.innerHTML = `<span class="num">${m.num} /</span><span class="nm">${m.name}</span>`;
-      b.addEventListener('click', () => {
-        state.module = m.id;
-        state.replay = null; /* 切模块即退出回放 */
-        renderNav(); renderSubnav(); nextQuestion();
-      });
+      b.className = 'mod-btn t' + m.tier + (m.id === state.module ? ' active' : '') + (unlocked ? '' : ' locked');
+      b.innerHTML = `<span class="num">${unlocked ? m.num + ' /' : '🔒'}</span><span class="nm">${m.name}${isPassed(m.id) ? ' ✓' : ''}</span>`;
+      if (unlocked) {
+        b.addEventListener('click', () => {
+          state.module = m.id;
+          state.replay = null; /* 切模块即退出回放 */
+          state.round = { n: 0, ok: 0, ms: 0 };
+          renderNav(); renderSubnav(); nextQuestion();
+        });
+      }
       els.modules.appendChild(b);
-    }
+    });
   }
   function renderSubnav() {
     els.subnav.innerHTML = '';
@@ -442,7 +563,7 @@
       const b = document.createElement('button');
       b.className = 'chip' + (t.id === state.outsTier ? ' active' : '');
       b.textContent = t.label;
-      b.addEventListener('click', () => { state.outsTier = t.id; state.replay = null; renderSubnav(); nextQuestion(); });
+      b.addEventListener('click', () => { state.outsTier = t.id; state.replay = null; state.round = { n: 0, ok: 0, ms: 0 }; renderSubnav(); nextQuestion(); });
       els.subnav.appendChild(b);
     }
   }
@@ -452,14 +573,19 @@
   $('cheat-toggle').addEventListener('click', () => cheat.classList.toggle('open'));
   $('cheat-close').addEventListener('click', () => cheat.classList.remove('open'));
 
-  /* ---------- 错题回放 / 统计重置 / 小结 / 进度 ---------- */
+  /* ---------- 错题回放 / 统计重置 / 小结 / 进度 / 大厅 ---------- */
   els.replayBtn.addEventListener('click', startReplay);
+  els.homeBtn.addEventListener('click', backToLobby);
+  $('round-home').addEventListener('click', backToLobby);
   $('reset-stats').addEventListener('click', () => {
-    state.stats = { modules: blankStats(), wrongs: [] };
+    state.stats = { modules: blankStats(), wrongs: [], passed: {} };
     state.replay = null;
+    state.round = { n: 0, ok: 0, ms: 0 };
     saveStats();
     updateStatsBar();
     renderReplayBtn();
+    renderNav();
+    if (state.screen === 'lobby') renderLobby();
   });
   $('round-continue').addEventListener('click', () => { hideRoundSummary(); nextQuestion(); });
   $('progress-btn').addEventListener('click', () => { renderProgress(); $('progress-overlay').classList.add('open'); });
@@ -477,6 +603,7 @@
       $('progress-overlay').classList.remove('open');
       return;
     }
+    if (state.screen === 'lobby') return;
     if (els.overlay.classList.contains('open')) {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); hideRoundSummary(); nextQuestion(); }
       return;
@@ -495,9 +622,10 @@
     else if (e.key === 'Enter') pressKey('✓');
   });
 
-  /* ---------- 启动 ---------- */
+  /* ---------- 启动：进大厅，不直接出题 ---------- */
   renderNav();
   renderSubnav();
   renderReplayBtn();
-  nextQuestion();
+  updateStatsBar();
+  setScreen('lobby');
 })();

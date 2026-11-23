@@ -1,11 +1,12 @@
 /* Poker Math Lab — Service Worker（离线缓存） */
-const CACHE = 'pml-v4';
+const CACHE = 'pml-v5';
 const ASSETS = [
   './',
   './index.html',
   './app.js',
   './engine.js',
   './manifest.json',
+  './icons/icon.svg',
   './icons/01a208e0-8e1f-7ea0-91c0-0db5c496a136-icon-180.png',
   './icons/01a208e0-ec40-7e90-9995-aa75dbfdf4f8-icon-192.png',
   './icons/01a208e1-0de2-79e4-a590-d6d1db51697b-icon-512.png',
