@@ -1,5 +1,5 @@
 /* Poker Math Lab — Service Worker（离线缓存） */
-const CACHE = 'pml-v3';
+const CACHE = 'pml-v4';
 const ASSETS = [
   './',
   './index.html',
