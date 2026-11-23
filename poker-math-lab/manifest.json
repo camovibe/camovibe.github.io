@@ -9,7 +9,7 @@
   "background_color": "#0A0B0D",
   "theme_color": "#0A0B0D",
   "icons": [
-    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+    { "src": "icons/01a208e0-ec40-7e90-9995-aa75dbfdf4f8-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/01a208e1-0de2-79e4-a590-d6d1db51697b-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
   ]
 }
