@@ -1,5 +1,5 @@
 /* Poker Math Lab — Service Worker（离线缓存） */
-const CACHE = 'pml-v6';
+const CACHE = 'pml-v7';
 const ASSETS = [
   './',
   './index.html',
@@ -26,16 +26,32 @@ self.addEventListener('activate', e => {
   );
 });
 
+/* 代码类文件（HTML/JS/manifest）：网络优先，失败回退缓存 —— 保证更新即时生效 */
+/* 图标等静态资源：缓存优先，离线秒开 */
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
-  e.respondWith(
-    caches.match(e.request).then(hit =>
-      hit ||
+  const url = new URL(e.request.url);
+  const isCode = /\/(index\.html|app\.js|engine\.js|manifest\.json)?$/.test(url.pathname)
+    || url.pathname.endsWith('/');
+
+  if (isCode) {
+    e.respondWith(
       fetch(e.request).then(res => {
         const copy = res.clone();
         caches.open(CACHE).then(c => c.put(e.request, copy));
         return res;
-      }).catch(() => caches.match('./index.html'))
-    )
-  );
+      }).catch(() => caches.match(e.request).then(hit => hit || caches.match('./index.html')))
+    );
+  } else {
+    e.respondWith(
+      caches.match(e.request).then(hit =>
+        hit ||
+        fetch(e.request).then(res => {
+          const copy = res.clone();
+          caches.open(CACHE).then(c => c.put(e.request, copy));
+          return res;
+        }).catch(() => caches.match('./index.html'))
+      )
+    );
+  }
 });
