@@ -1,4 +1,4 @@
-/* Poker Math Lab — UI 逻辑（关卡制：大厅选关 · 合格解锁下一关） */
+/* Poker Math Lab — UI 逻辑（关卡制：大厅选关 · 通关解锁 · 段位滚动窗口） */
 (function () {
   'use strict';
   const E = window.PokerEngine;
@@ -26,10 +26,12 @@
   const TIER_LABELS = ['基础层 · BASIC', '修正层 · CORRECTION', '博弈层 · GAME THEORY'];
   const ROUND_SIZE = 20;
   const WRONGS_CAP = 50;
-  const PASS_ACC = 90; /* 解锁合格线：单组正确率 ≥ 90% 且均时 ≤ 目标 */
+  const PASS_ACC = 90;   /* 通关线：单组 20 题正确率 ≥ 90% 且均时 ≤ 目标 → 解锁下一关 */
+  const RECENT_WIN = 40; /* 段位窗口：最近 40 题同标准 → 升段 */
 
   /* ---------- 段位体系 ----------
-     达标线：题数 ≥ 40 · 正确率 ≥ 90% · 均时 ≤ 目标用时；段位按层递进 */
+     达标线改为「最近 40 题」滚动窗口：正确率 ≥ 90% · 均时 ≤ 目标用时。
+     早期错题不再永久拖后腿——段位衡量的是你现在的水平，不是你的黑历史。 */
   const TIER_GROUPS = {
     base:       ['outs', 'equity', 'potodds', 'numbers'],
     decision:   ['decision'],
@@ -44,11 +46,18 @@
     { name: 'Lv4 · 博弈结构',   pct: '超过约 95% 玩家',   desc: 'MDF / 半诈唬 EV / 范围胜率，业余池天花板（10-13 达标）' },
     { name: 'Lv5 · 概率派大师', pct: '业余池约前 1~3%',   desc: '05 综合决策累计 100+ 题 · 正确率 ≥95% · 均时 ≤6s' },
   ];
+  function windowStat(id) {
+    const r = state.stats.recent[id];
+    if (!r || !r.length) return { n: 0, acc: 0, avg: Infinity };
+    let ok = 0, ms = 0;
+    for (const x of r) { if (x.ok) ok++; ms += x.ms; }
+    return { n: r.length, acc: (ok / r.length) * 100, avg: ms / r.length / 1000 };
+  }
   function modQualified(id) {
     const m = MODULES.find(x => x.id === id);
-    const st = state.stats.modules[id];
-    if (!st || st.n < 40) return false;
-    return (st.ok / st.n) >= 0.9 && (st.ms / st.n / 1000) <= m.par;
+    const w = windowStat(id);
+    if (w.n < RECENT_WIN) return false;
+    return (w.acc / 100) >= 0.9 && w.avg <= m.par;
   }
   const groupDone = ids => ids.every(modQualified);
   function computeLevel() {
@@ -64,9 +73,9 @@
     return lv;
   }
 
-  /* ---------- 关卡解锁 ---------- */
-  const isPassed = id => !!state.stats.passed[id] || modQualified(id);
-  const isUnlocked = i => i === 0 || isPassed(MODULES[i - 1].id);
+  /* ---------- 关卡解锁（通关 = 单组合格） ---------- */
+  const isPassed = id => !!state.stats.passed[id];
+  const isUnlocked = i => i === 0 || isPassed(MODULES[i - 1].id) || modQualified(MODULES[i - 1].id);
 
   function renderProgress() {
     const lv = computeLevel();
@@ -81,16 +90,16 @@
       return `<div class="lvl-row ${cls}"><span class="lvn">${mark}${L.name}</span><span class="lvp">${L.pct}</span></div>`;
     }).join('');
     $('mod-progress').innerHTML = MODULES.map((m, i) => {
-      const st = state.stats.modules[m.id];
-      const acc = st.n ? Math.round((st.ok / st.n) * 100) + '%' : '—';
-      const avg = st.n ? (st.ms / st.n / 1000).toFixed(1) + 's' : '—';
-      const ok = isPassed(m.id);
-      const status = ok ? '<span class="st-ok">已合格</span>'
+      const w = windowStat(m.id);
+      const acc = w.n ? Math.round(w.acc) + '%' : '—';
+      const avg = w.n ? w.avg.toFixed(1) + 's' : '—';
+      const ok = modQualified(m.id);
+      const status = ok ? '<span class="st-ok">已达标</span>'
         : (!isUnlocked(i) ? '<span class="st-no">🔒 锁定</span>'
-        : (st.n ? '<span class="st-ing">训练中</span>' : '<span class="st-no">未开始</span>'));
+        : (w.n ? '<span class="st-ing">窗口 ' + w.n + '/' + RECENT_WIN + '</span>' : '<span class="st-no">未开始</span>'));
       return `<div class="mod-row">` +
         `<span class="dim">${m.num}</span><span class="nm">${m.name}</span>` +
-        `<span>${st.n}</span><span>${acc}</span><span>${avg}</span>` +
+        `<span>${w.n}</span><span>${acc}</span><span>${avg}</span>` +
         `<span class="par dim">≤${m.par}s</span><span>${status}</span></div>`;
     }).join('');
   }
@@ -102,17 +111,26 @@
     for (const m of MODULES) o[m.id] = { n: 0, ok: 0, ms: 0, streak: 0, best: 0 };
     return o;
   }
+  function blankRecent() {
+    const o = {};
+    for (const m of MODULES) o[m.id] = [];
+    return o;
+  }
   function loadStats() {
     try {
       const s = JSON.parse(localStorage.getItem(LS_KEY));
       if (s && s.modules) {
         if (!Array.isArray(s.wrongs)) s.wrongs = [];
         if (!s.passed || typeof s.passed !== 'object') s.passed = {};
-        for (const m of MODULES) if (!s.modules[m.id]) s.modules[m.id] = { n: 0, ok: 0, ms: 0, streak: 0, best: 0 };
+        if (!s.recent || typeof s.recent !== 'object') s.recent = {};
+        for (const m of MODULES) {
+          if (!s.modules[m.id]) s.modules[m.id] = { n: 0, ok: 0, ms: 0, streak: 0, best: 0 };
+          if (!Array.isArray(s.recent[m.id])) s.recent[m.id] = [];
+        }
         return s;
       }
     } catch (e) { /* ignore */ }
-    return { modules: blankStats(), wrongs: [], passed: {} };
+    return { modules: blankStats(), wrongs: [], passed: {}, recent: blankRecent() };
   }
   function saveStats() { localStorage.setItem(LS_KEY, JSON.stringify(state.stats)); }
 
@@ -131,11 +149,18 @@
     replay: null,  /* { queue:[entry], idx } */
   };
   for (const m of MODULES) state.session[m.id] = { n: 0, ok: 0, ms: 0 };
-  /* 迁移：历史数据已达段位标准的模块，直接视为已合格（解锁用） */
-  (function migrate() {
+  /* 迁移：历史只有聚合数据。题数 ≤ 窗口时，最近窗口 = 全部历史，
+     可按比例回填（对错顺序不可考，但窗口判定只依赖计数与均时，等价） */
+  (function seedRecent() {
     let changed = false;
     for (const m of MODULES) {
-      if (modQualified(m.id) && !state.stats.passed[m.id]) { state.stats.passed[m.id] = true; changed = true; }
+      const st = state.stats.modules[m.id];
+      const r = state.stats.recent[m.id];
+      if (!r.length && st.n > 0 && st.n <= RECENT_WIN) {
+        const avg = st.ms / st.n;
+        for (let i = 0; i < st.n; i++) r.push({ ok: i < st.ok, ms: avg });
+        changed = true;
+      }
     }
     if (changed) saveStats();
   })();
@@ -257,10 +282,15 @@
         if (m.tier !== t) return;
         const unlocked = isUnlocked(i);
         const passed = isPassed(m.id);
+        const qualified = modQualified(m.id);
         const st = state.stats.modules[m.id];
+        const w = windowStat(m.id);
         const status = passed
-          ? '<span class="lv-status pass">✓ 已合格</span>'
+          ? '<span class="lv-status pass">✓ 已通关</span>'
           : (unlocked ? '<span class="lv-status open">▸ 可挑战</span>' : '<span class="lv-status lock">🔒 未解锁</span>');
+        const winTxt = qualified
+          ? '段位达标 ✓'
+          : (w.n ? `段位窗口 ${w.n}/${RECENT_WIN} · ${Math.round(w.acc)}% · ${w.avg.toFixed(1)}s` : `段位窗口 0/${RECENT_WIN}`);
         const b = document.createElement('button');
         b.className = 'lv-card t' + m.tier + (unlocked ? '' : ' locked');
         b.innerHTML =
@@ -268,10 +298,9 @@
           `<div class="lv-name">${m.name}</div>` +
           `<div class="lv-meta">` +
             `<span>目标 ≤${m.par}s</span><span>已练 ${st.n}</span>` +
-            `<span>正确率 ${st.n ? Math.round((st.ok / st.n) * 100) + '%' : '—'}</span>` +
-            `<span>均时 ${st.n ? (st.ms / st.n / 1000).toFixed(1) + 's' : '—'}</span>` +
+            `<span style="color:${qualified ? 'var(--pass)' : 'var(--faint)'}">${winTxt}</span>` +
           `</div>` +
-          (unlocked ? '' : `<div class="lv-req">先合格上一关：${MODULES[i - 1].num} ${MODULES[i - 1].name}（20 题 · ≥${PASS_ACC}% · ≤${MODULES[i - 1].par}s）</div>`);
+          (unlocked ? '' : `<div class="lv-req">先通关上一关：${MODULES[i - 1].num} ${MODULES[i - 1].name}（20 题 · ≥${PASS_ACC}% · ≤${MODULES[i - 1].par}s）</div>`);
         if (unlocked) b.addEventListener('click', () => startModule(m.id));
         grid.appendChild(b);
       });
@@ -421,6 +450,10 @@
     se.n++; se.ms += ms; if (ok) se.ok++;
     if (!state.replay) {
       state.round.n++; state.round.ms += ms; if (ok) state.round.ok++;
+      /* 段位滚动窗口：最近 40 题 */
+      const r = state.stats.recent[mod];
+      r.push({ ok, ms });
+      while (r.length > RECENT_WIN) r.shift();
     }
 
     /* 错题本：普通模式答错入库；回放模式答对销账、再错排到队尾 */
@@ -455,15 +488,13 @@
   /* 统一的前进入口：回放队首 / 普通下一题 */
   function advance() { nextQuestion(); }
 
-  /* ---------- 组小结（含合格判定与解锁） ---------- */
+  /* ---------- 组小结（通关判定与解锁） ---------- */
   function showRoundSummary(mod) {
     const m = MODULES.find(x => x.id === mod);
     const idx = MODULES.findIndex(x => x.id === mod);
     const next = MODULES[idx + 1] || null;
-    const all = state.stats.modules[mod];
     const r = state.round;
-    const acc = x => (x.n ? Math.round((x.ok / x.n) * 100) + '%' : '—');
-    const avg = x => (x.n ? (x.ms / x.n / 1000).toFixed(1) + 's' : '—');
+    const w = windowStat(mod);
 
     const rAcc = r.n ? (r.ok / r.n) * 100 : 0;
     const rAvg = r.n ? r.ms / r.n / 1000 : Infinity;
@@ -473,7 +504,7 @@
     if (roundPassed) {
       state.stats.passed[mod] = true;
       saveStats();
-      verdict = `<b style="color:var(--pass)">✓ 合格</b>`;
+      verdict = `<b style="color:var(--pass)">✓ 通关</b>`;
       unlock = next
         ? `<b style="color:var(--pass)">已解锁 ${next.num} ${next.name}</b>`
         : `<b style="color:var(--pass)">全部关卡已通关</b>`;
@@ -481,7 +512,7 @@
       const reasons = [];
       if (rAcc < PASS_ACC) reasons.push(`正确率 ${Math.round(rAcc)}% < ${PASS_ACC}%`);
       if (rAvg > m.par) reasons.push(`均时 ${rAvg.toFixed(1)}s > ${m.par}s`);
-      verdict = `<b style="color:var(--fail)">✗ 未合格</b>`;
+      verdict = `<b style="color:var(--fail)">✗ 未通关</b>`;
       unlock = `<b style="color:var(--warn)">${reasons.join(' · ')}</b>`;
     }
 
@@ -490,8 +521,8 @@
     els.roundGrid.innerHTML =
       `<div><span>本组正确率</span><b>${r.n ? Math.round(rAcc) + '%' : '—'}（需 ≥${PASS_ACC}%）</b></div>` +
       `<div><span>本组均时</span><b>${r.n ? rAvg.toFixed(1) + 's' : '—'}（需 ≤${m.par}s）</b></div>` +
-      `<div><span>历史正确率</span><b>${acc(all)}</b></div>` +
-      `<div><span>历史均时</span><b>${avg(all)}</b></div>` +
+      `<div><span>段位窗口</span><b>${w.n}/${RECENT_WIN} · ${w.n ? Math.round(w.acc) + '%' : '—'} · ${w.n ? w.avg.toFixed(1) + 's' : '—'}</b></div>` +
+      `<div><span>段位判定</span><b style="color:${modQualified(mod) ? 'var(--pass)' : 'var(--faint)'}">${modQualified(mod) ? '✓ 已达标' : '未达标'}</b></div>` +
       `<div><span>本组判定</span>${verdict}</div>` +
       `<div><span>关卡进度</span>${unlock}</div>`;
     els.overlay.classList.add('open');
@@ -578,7 +609,7 @@
   els.homeBtn.addEventListener('click', backToLobby);
   $('round-home').addEventListener('click', backToLobby);
   $('reset-stats').addEventListener('click', () => {
-    state.stats = { modules: blankStats(), wrongs: [], passed: {} };
+    state.stats = { modules: blankStats(), wrongs: [], passed: {}, recent: blankRecent() };
     state.replay = null;
     state.round = { n: 0, ok: 0, ms: 0 };
     saveStats();
