@@ -367,7 +367,7 @@ footer .spacer{flex:1}
   <section id="lobby">
     <div class="lobby-head">
       <div class="lobby-title">选择关卡</div>
-      <div class="lobby-sub">每组 20 题 · 合格线：正确率 ≥ 90% 且均时 ≤ 目标 · 合格即解锁下一关</div>
+      <div class="lobby-sub">通关：单组 20 题 ≥90% 且均时 ≤ 目标 → 解锁下一关 · 段位：最近 40 题同标准 → 升段</div>
       <div><span class="lobby-lv" id="lobby-lv"></span></div>
     </div>
     <div id="lobby-tiers"></div>
@@ -423,7 +423,7 @@ footer .spacer{flex:1}
       <div id="mod-progress"></div>
     </div>
     <div class="progress-note">
-      解锁规则：每关练满一组 20 题，正确率 ≥ 90% 且均时 ≤ 目标即合格，自动解锁下一关。段位达标线：累计题数 ≥ 40 · 正确率 ≥ 90% · 均时 ≤ 目标。段位按层递进：基础层 01-04 → 决策 05 → 修正层 06-09 → 博弈层 10-13。<br>
+      通关（解锁下一关）：单组 20 题，正确率 ≥ 90% 且均时 ≤ 目标。段位（升 Lv）：<b>最近 40 题</b>滚动窗口达同一标准——早期错题会自动滚出窗口，不拖后腿。段位按层递进：基础层 01-04 → 决策 05 → 修正层 06-09 → 博弈层 10-13。表中题数/正确率/均时均为窗口口径。<br>
       百分比为对<b>现场低中级别现金桌/朋友局玩家池</b>的推算估算（依据：绝大多数娱乐玩家不计算赔率，常客中系统做范围与 EV 修正的是少数）——数学是地板不是天花板：读人、情绪控制、资金管理不在此尺上。对职业桌，Lv5 只是入场券。
     </div>
     <div style="text-align:center;margin-top:20px">
